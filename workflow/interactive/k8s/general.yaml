@@ -1,0 +1,96 @@
+permissions:
+  - '*'
+
+app:
+  target: inputs.k8s.cluster
+
+jobs:
+  deploy_sam2:
+    steps:
+      - name: Authenticate Kubernetes
+        run: pw kube auth ${{ inputs.k8s.cluster }}
+
+      - name: Generate Deployment YAML
+        run: |
+          cat <<EOF > sam2-deployment.yaml
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: ${{ inputs.app.name }}
+            namespace: default
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: ${{ inputs.app.name }}
+            template:
+              metadata:
+                labels:
+                  app: ${{ inputs.app.name }}
+              spec:
+                runtimeClassName: nvidia
+                containers:
+                  - name: ${{ inputs.app.name }}
+                    image: nhuytan/sam2-video-tracker:test
+                    imagePullPolicy: Always
+                    ports:
+                      - containerPort: 3000
+                    command: ["sh", "-c"]
+                    args: ["echo 'Starting Next.js server...' && pnpm start"]
+                    resources:
+                      limits:
+                        nvidia.com/gpu: ${{ inputs.resources.gpu_count }}
+                    env:
+                      - name: TORCH_DEVICE
+                        value: "cuda"
+                      - name: SAFE_MODE
+                        value: "true"
+                      - name: PYTORCH_CUDA_ALLOC_CONF
+                        value: "max_split_size_mb:128,garbage_collection_threshold:0.8"
+                      - name: NODE_ENV
+                        value: "production"
+                      - name: NEXT_TELEMETRY_DISABLED
+                        value: "1"
+                      - name: PYTHONPATH
+                        value: "/app"
+                      - name: NVIDIA_VISIBLE_DEVICES
+                        value: "all"
+                      - name: NVIDIA_DRIVER_CAPABILITIES
+                        value: "compute,utility"
+                      - name: PYTHONUNBUFFERED
+                        value: "1"
+          EOF
+
+      - name: Apply Deployment
+        run: kubectl apply -f sam2-deployment.yaml
+
+'on':
+  execute:
+    inputs:
+      k8s:
+        type: group
+        label: Kubernetes Settings
+        items:
+          cluster:
+            type: kubernetes-clusters
+            label: Select Cluster
+
+      app:
+        type: group
+        label: App Settings
+        items:
+          name:
+            label: Deployment Name
+            type: string
+            default: sam2-demo
+
+      resources:
+        type: group
+        label: GPU Settings
+        items:
+          gpu_count:
+            label: Number of GPUs
+            type: number
+            default: 1
+            min: 1
+            step: 1
