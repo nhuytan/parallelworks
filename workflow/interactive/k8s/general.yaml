@@ -17,7 +17,7 @@ jobs:
           kind: Deployment
           metadata:
             name: ${{ inputs.app.name }}
-            namespace: default
+            namespace: ${{ inputs.k8s.namespace }}
           spec:
             replicas: 1
             selector:
@@ -64,6 +64,45 @@ jobs:
       - name: Apply Deployment
         run: kubectl apply -f sam2-deployment.yaml
 
+      - name: Create Service
+        run: |
+          cat <<EOF > sam2-service.yaml
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: ${{ inputs.app.name }}
+            namespace: ${{ inputs.k8s.namespace }}
+          spec:
+            selector:
+              app: ${{ inputs.app.name }}
+            ports:
+              - protocol: TCP
+                port: 3000
+                targetPort: 3000
+          EOF
+          kubectl apply -f sam2-service.yaml
+
+      - name: Wait for Pod
+        run: |
+          echo "Waiting for pod to be ready..."
+          kubectl wait --for=condition=Ready pod -l app=${{ inputs.app.name }} -n ${{ inputs.k8s.namespace }} --timeout=300s
+
+  create_session:
+    needs:
+      - deploy_sam2
+    steps:
+      - name: Expose session
+        uses: parallelworks/update-session
+        with:
+          remotePort: 3000
+          name: session
+          slug: ""
+          targetInfo:
+            name: ${{ inputs.k8s.cluster }}
+            namespace: ${{ inputs.k8s.namespace }}
+            resourceType: services
+            resourceName: ${{ inputs.app.name }}
+
 'on':
   execute:
     inputs:
@@ -74,6 +113,10 @@ jobs:
           cluster:
             type: kubernetes-clusters
             label: Select Cluster
+          namespace:
+            type: kubernetes-namespaces
+            label: Namespace
+            clusterName: ${{ inputs.k8s.cluster }}
 
       app:
         type: group
